@@ -1,44 +1,66 @@
+# 工作流名称：自动备份代码到飞牛NAS（远程访问版）
 name: Auto Backup Code to Feiniu NAS (远程访问版)
+
+# 触发规则：1. 推代码到main分支时触发 2. 每天北京时间凌晨3点自动触发
 on:
   push:
     branches: [ main ]
   schedule:
-    - cron: '0 19 * * *'  # 北京时间凌晨3点自动备份
+    - cron: '0 19 * * *'  # UTC时间19点 = 北京时间凌晨3点
 
+# 工作流权限（仅读取代码，最小权限原则）
 permissions:
   contents: read
 
 jobs:
   backup-to-nas:
+    # 使用Ubuntu最新版虚拟机运行
     runs-on: ubuntu-latest
     steps:
+      # 步骤1：拉取GitHub仓库代码（含所有历史版本）
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # 拉取完整代码历史
 
+      # 步骤2：安装SFTP客户端（lftp）
       - name: Install lftp (SFTP client)
         run: sudo apt-get update && sudo apt-get install -y lftp
 
+      # 步骤3：压缩代码为ZIP包（排除无用目录，减小体积）
       - name: Compress code to ZIP
         run: |
+          # 生成带时间戳的压缩包名，避免覆盖
           ZIP_NAME="backup_${{ github.repository_name }}_$(date +%Y%m%d_%H%M%S).zip"
-          zip -r $ZIP_NAME ./*
+          # 压缩所有文件，排除依赖/缓存目录
+          zip -r $ZIP_NAME ./* -x "node_modules/*" "venv/*" "__pycache__/*" ".git/*"
+          # 将压缩包名存入环境变量，供后续步骤使用
           echo "ZIP_FILE=$ZIP_NAME" >> $GITHUB_ENV
 
+      # 步骤4：通过SFTP上传到飞牛NAS（修复端口配置语法）
       - name: Upload to Feiniu NAS via SFTP (远程访问)
         run: |
           lftp -c "
-          set sftp:port ${{ secrets.NAS_PORT }};
+          # 正确配置SFTP端口（修复核心语法错误）
+          set sftp:connect-program \"ssh -a -x -p ${{ secrets.NAS_SFTP_OUTER_PORT }}\";
+          # 禁用SSL（飞牛远程访问默认关闭）
           set ftp:ssl-allow no;
-          set net:timeout 30;
-          set net:max-retries 3;
+          # 设置连接超时时间
+          set net:timeout ${{ secrets.NAS_CONNECT_TIMEOUT }};
+          # 设置失败重试次数
+          set net:max-retries ${{ secrets.NAS_RETRY_TIMES }};
+          # 连接飞牛NAS的SFTP服务
           open sftp://${{ secrets.NAS_USERNAME }}:${{ secrets.NAS_PASSWORD }}@${{ secrets.NAS_HOST }};
-          mkdir -p ${{ secrets.NAS_BACKUP_PATH }};
-          cd ${{ secrets.NAS_BACKUP_PATH }};
+          # 自动创建备份目录（若不存在）
+          mkdir -p ${{ secrets.NAS_BACKUP_ABS_PATH }};
+          # 进入备份目录
+          cd ${{ secrets.NAS_BACKUP_ABS_PATH }};
+          # 上传压缩包到NAS
           put ${{ env.ZIP_FILE }};
+          # 退出连接
           bye
           "
 
+      # 步骤5：输出备份成功日志
       - name: Backup success
-        run: echo "✅ 代码已备份到飞牛NAS（远程访问）：${{ secrets.NAS_BACKUP_PATH }}/${{ env.ZIP_FILE }}"
+        run: echo "✅ 代码已成功备份到飞牛NAS：${{ secrets.NAS_BACKUP_ABS_PATH }}/${{ env.ZIP_FILE }}"
