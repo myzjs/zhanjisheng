@@ -1,0 +1,4 @@
+project_category,project_level,system_name,standard_requirement,requirement_type,inspection_project,reference_screenshot,remarks,clause_id,enabled_status
+项目类别ID(evaluation_type_id),项目级别ID,系统名称ID,标准要求,要求类型,考察项目,参考截图URL,备注说明,标准条款ID,启用状态(1=启用,0=禁用)
+1,1,,测试模板导入数据1,功能要求,测试考察项目1,,,1,1
+1,1,,测试模板导入数据2,功能要求,测试考察项目2,,,1,1
