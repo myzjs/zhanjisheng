@@ -1,0 +1,53 @@
+# 工作流名称：自动备份代码到飞牛NAS
+name: Auto Backup Code to Feiniu NAS
+
+# 触发规则：1. 代码push到main分支时触发 2. 每天凌晨3点自动触发
+on:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: '0 19 * * *'  # 对应北京时间凌晨3点（GitHub服务器是UTC时区，差8小时）
+
+# 工作流权限
+permissions:
+  contents: read  # 仅读取代码内容
+
+jobs:
+  backup-to-nas:
+    runs-on: ubuntu-latest  # 使用Ubuntu虚拟机运行
+    steps:
+      # 步骤1：拉取GitHub仓库代码
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 拉取所有历史版本（含分支、标签）
+
+      # 步骤2：安装SFTP客户端（用于连接NAS）
+      - name: Install lftp (SFTP client)
+        run: sudo apt-get update && sudo apt-get install -y lftp
+
+      # 步骤3：压缩代码为ZIP包（避免传输零散文件）
+      - name: Compress code to ZIP
+        run: |
+          # 生成带时间戳的压缩包名（避免覆盖）
+          ZIP_NAME="backup_${{ github.repository_name }}_$(date +%Y%m%d_%H%M%S).zip"
+          zip -r $ZIP_NAME ./*
+          echo "ZIP_FILE=$ZIP_NAME" >> $GITHUB_ENV  # 把压缩包名存入环境变量
+
+      # 步骤4：通过SFTP上传到飞牛NAS
+      - name: Upload to Feiniu NAS via SFTP
+        run: |
+          # 拼接SFTP连接命令，自动创建备份目录（若不存在）
+          lftp -c "
+          set sftp:port ${{ secrets.NAS_PORT }};
+          set ftp:ssl-allow no;
+          open sftp://${{ secrets.NAS_USERNAME }}:${{ secrets.NAS_PASSWORD }}@${{ secrets.NAS_HOST }};
+          mkdir -p ${{ secrets.NAS_BACKUP_PATH }};
+          cd ${{ secrets.NAS_BACKUP_PATH }};
+          put ${{ env.ZIP_FILE }};
+          bye
+          "
+
+      # 步骤5：输出备份成功日志
+      - name: Backup success
+        run: echo "✅ 代码已成功备份到飞牛NAS：${{ secrets.NAS_BACKUP_PATH }}/${{ env.ZIP_FILE }}"
